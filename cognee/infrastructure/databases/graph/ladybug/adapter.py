@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -2880,6 +2881,7 @@ class LadybugAdapter(GraphDBInterface):
 
     async def get_graph_data(
         self,
+        node_types: list[str] | None = None,
     ) -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, str, str, dict[str, Any]]]]:
         """
         Get all nodes and edges in the graph.
@@ -2901,14 +2903,26 @@ class LadybugAdapter(GraphDBInterface):
         start_time = time.time()
 
         try:
-            nodes_query = """
-            MATCH (n:Node)
-            RETURN n.id, {
+            # Optional server-side node-type filter (memify consolidation
+            # only needs Entity + EntityType). None/[] = full graph, as before.
+            # ponytail: inline list after regex whitelist instead of bind
+            # params — ladybug param plumbing for lists is unverified; safe
+            # because identifiers are validated to [A-Za-z0-9_]+.
+            type_list = ""
+            if node_types:
+                safe = [t for t in node_types if re.fullmatch(r"[A-Za-z0-9_]+", t or "")]
+                if safe:
+                    type_list = "['" + "', '".join(safe) + "']"
+            nodes_query = (
+                "MATCH (n:Node)\n"
+                + (f"WHERE n.type IN {type_list}\n" if type_list else "")
+                + """RETURN n.id, {
                 name: n.name,
                 type: n.type,
                 properties: n.properties
             }
             """
+            )
             nodes = await self.query(nodes_query)
             formatted_nodes = []
             for n in nodes:
@@ -2927,10 +2941,15 @@ class LadybugAdapter(GraphDBInterface):
                 logger.warning("No nodes found in the database")
                 return [], []
 
-            edges_query = """
-            MATCH (n:Node)-[r]->(m:Node)
-            RETURN n.id, m.id, r.relationship_name, r.properties
-            """
+            edges_query = (
+                "MATCH (n:Node)-[r]->(m:Node)\n"
+                + (
+                    f"WHERE n.type IN {type_list} OR m.type IN {type_list}\n"
+                    if type_list
+                    else ""
+                )
+                + "RETURN n.id, m.id, r.relationship_name, r.properties\n"
+            )
             edges = await self.query(edges_query)
             formatted_edges = []
             for e in edges:

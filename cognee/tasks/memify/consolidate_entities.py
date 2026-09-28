@@ -19,6 +19,7 @@ the vector engine's ``delete_data_points``. No per-edge delete primitive is
 required or used.
 """
 
+import inspect
 import json
 import re
 from typing import Any
@@ -226,7 +227,16 @@ async def detect_entity_duplicates(
     graph_engine = await get_graph_engine()
     vector_engine = get_vector_engine()
 
-    nodes, edges = await graph_engine.get_graph_data()
+    # Perf: pull only Entity + EntityType nodes and their incident edges when
+    # the adapter supports server-side type filtering; adapters without the
+    # parameter keep the historical full load. On large shared graphs the
+    # full load dominated improve latency (6.5k nodes, seconds per run).
+    if "node_types" in inspect.signature(graph_engine.get_graph_data).parameters:
+        nodes, edges = await graph_engine.get_graph_data(
+            node_types=["Entity", "EntityType"]
+        )
+    else:
+        nodes, edges = await graph_engine.get_graph_data()
     nodes_by_id = {str(node_id): props for node_id, props in nodes}
 
     entity_ids = {
