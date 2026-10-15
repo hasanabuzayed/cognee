@@ -2268,6 +2268,21 @@ class LadybugAdapter(GraphDBInterface):
             logger.exception(f"Failed to get node {node_id}")
             return None
 
+    async def get_nodes_by_type(self, node_type: type[Any]) -> list[dict[str, Any]]:
+        """Nodes whose ``type`` is ``node_type.__name__``, without a full graph scan."""
+        query_str = """
+        MATCH (n:Node)
+        WHERE n.type = $label
+        RETURN {
+            id: n.id,
+            name: n.name,
+            type: n.type,
+            properties: n.properties
+        }
+        """
+        results = await self.query(query_str, {"label": node_type.__name__})
+        return [self._parse_node(row[0]) for row in results if row and row[0]]
+
     async def get_nodes(self, node_ids: list[str]) -> list[dict[str, Any]]:
         """
         Get multiple nodes by their IDs.
@@ -2943,11 +2958,7 @@ class LadybugAdapter(GraphDBInterface):
 
             edges_query = (
                 "MATCH (n:Node)-[r]->(m:Node)\n"
-                + (
-                    f"WHERE n.type IN {type_list} OR m.type IN {type_list}\n"
-                    if type_list
-                    else ""
-                )
+                + (f"WHERE n.type IN {type_list} OR m.type IN {type_list}\n" if type_list else "")
                 + "RETURN n.id, m.id, r.relationship_name, r.properties\n"
             )
             edges = await self.query(edges_query)

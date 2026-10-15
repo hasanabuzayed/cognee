@@ -304,31 +304,10 @@ async def _load_nodes_by_type(model):
         logger.debug("Falling back to [] after error in _load_nodes_by_type", exc_info=True)
         return []
 
-    get_by_type = getattr(graph_engine, "get_nodes_by_type", None)
-    if get_by_type is not None:
-        try:
-            return await get_by_type(node_type=model)
-        except Exception as exc:
-            logger.warning("Skill improvement lookup failed: %s", exc, exc_info=True)
-            return []
-
-    get_nodeset = getattr(graph_engine, "get_nodeset_subgraph", None)
-    if get_nodeset is not None:
-        try:
-            nodes, _ = await get_nodeset(node_type=model, node_name=[SKILLS_NODE_SET])
-            if nodes:
-                return nodes
-        except Exception as exc:
-            logger.warning("Skill improvement nodeset lookup failed: %s", exc, exc_info=True)
-
-    get_graph_data = getattr(graph_engine, "get_graph_data", None)
-    if get_graph_data is None:
-        return []
     try:
-        nodes, _ = await get_graph_data()
-        return nodes
+        return await graph_engine.get_nodes_by_type(node_type=model)
     except Exception as exc:
-        logger.warning("Skill improvement full graph lookup failed: %s", exc, exc_info=True)
+        logger.warning("Skill improvement lookup failed: %s", exc, exc_info=True)
         return []
 
 

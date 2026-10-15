@@ -573,6 +573,27 @@ class GraphDBInterface(ABC):
         """
         raise NotImplementedError
 
+    async def get_nodes_by_type(self, node_type: type[Any]) -> list[NodeData]:
+        """
+        Return every node whose ``type`` is ``node_type.__name__`` (e.g. ``Skill``,
+        ``Tool``), each as a dict carrying at least ``id``.
+
+        This default scans ``get_graph_data``; adapters with a native query
+        override it (Ladybug).
+
+        Parameters:
+        -----------
+
+            - node_type (Type[Any]): The DataPoint class whose nodes to return.
+        """
+        label = node_type.__name__
+        nodes, _edges = await self.get_graph_data()
+        return [
+            {**(properties or {}), "id": str(node_id)}
+            for node_id, properties in nodes
+            if (properties or {}).get("type") == label
+        ]
+
     @abstractmethod
     async def add_edge(
         self,

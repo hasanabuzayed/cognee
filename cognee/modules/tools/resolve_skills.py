@@ -29,11 +29,14 @@ async def resolve_skills(
 
     resolved: list[Skill] = []
     seen_ids = set()
+    by_name: dict[str, Skill] | None = None
 
     for item in skills or []:
         skill = item if isinstance(item, Skill) else None
         if isinstance(item, str):
-            skill = await find_skill_by_name(item, dataset_id=dataset_id)
+            if by_name is None:  # one typed lookup serves every requested name
+                by_name = _skills_by_name(await _load_skill_nodes(), dataset_id)
+            skill = by_name.get(item)
         elif skill is None:
             logger.warning("Skill entries must be Skill or str; got %s", type(item).__name__)
 
@@ -51,65 +54,55 @@ async def resolve_skills(
 
 
 async def find_skill_by_id(skill_id: str, *, dataset_id: UUID) -> Skill | None:
-    raw_nodes = await _load_skill_nodes()
-    for raw in raw_nodes:
-        skill = _coerce_skill(raw)
-        if skill is None:
-            continue
-        if str(skill.id) == str(skill_id) and _skill_in_dataset_scope(skill, dataset_id):
-            return skill
+    graph_engine = await _get_graph_engine()
+    if graph_engine is None:
+        return None
+    try:
+        raw = await graph_engine.get_node(str(skill_id))
+    except Exception as exc:
+        logger.warning("Skill lookup by id failed: %s", exc, exc_info=True)
+        return None
+    if not raw or raw.get("type") != "Skill":
+        return None
+    skill = _coerce_skill(raw)
+    if skill is not None and _skill_in_dataset_scope(skill, dataset_id):
+        return skill
     return None
 
 
 async def find_skill_by_name(name: str, *, dataset_id: UUID) -> Skill | None:
-    raw_nodes = await _load_skill_nodes(name=name)
+    return _skills_by_name(await _load_skill_nodes(), dataset_id).get(name)
+
+
+def _skills_by_name(raw_nodes, dataset_id: UUID) -> dict[str, Skill]:
+    """In-scope skills keyed by name; the first match wins, as with a linear search."""
+    by_name: dict[str, Skill] = {}
     for raw in raw_nodes:
         skill = _coerce_skill(raw)
-        if skill is None or skill.name != name:
-            continue
-        if _skill_in_dataset_scope(skill, dataset_id):
-            return skill
-    return None
+        if skill is not None and _skill_in_dataset_scope(skill, dataset_id):
+            by_name.setdefault(skill.name, skill)
+    return by_name
 
 
-async def _load_skill_nodes(name: str | None = None):
+async def _get_graph_engine():
     try:
         from cognee.infrastructure.databases.graph import get_graph_engine
+
+        return await get_graph_engine()
     except Exception:
-        logger.debug("Optional import unavailable, continuing without it", exc_info=True)
-        return []
+        logger.debug("Graph engine unavailable for skill lookup", exc_info=True)
+        return None
 
-    try:
-        graph_engine = await get_graph_engine()
-    except Exception:
-        logger.debug("Falling back to [] after error in _load_skill_nodes", exc_info=True)
-        return []
 
-    get_by_type = getattr(graph_engine, "get_nodes_by_type", None)
-    if get_by_type is not None:
-        try:
-            return await get_by_type(node_type=Skill)
-        except Exception as exc:
-            logger.warning("Skill lookup by type failed: %s", exc, exc_info=True)
-            return []
-
-    get_nodeset = getattr(graph_engine, "get_nodeset_subgraph", None)
-    if get_nodeset is not None and name is not None:
-        try:
-            nodes, _ = await get_nodeset(node_type=Skill, node_name=[name])
-            if nodes:
-                return nodes
-        except Exception as exc:
-            logger.warning("Skill lookup by nodeset failed: %s", exc, exc_info=True)
-
-    get_graph_data = getattr(graph_engine, "get_graph_data", None)
-    if get_graph_data is None:
+async def _load_skill_nodes():
+    """All Skill nodes via the typed lookup (native on Ladybug, a scan elsewhere)."""
+    graph_engine = await _get_graph_engine()
+    if graph_engine is None:
         return []
     try:
-        nodes, _ = await get_graph_data()
-        return nodes
+        return await graph_engine.get_nodes_by_type(node_type=Skill)
     except Exception as exc:
-        logger.warning("Skill lookup by full graph scan failed: %s", exc, exc_info=True)
+        logger.warning("Skill lookup by type failed: %s", exc, exc_info=True)
         return []
 
 

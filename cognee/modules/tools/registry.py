@@ -110,22 +110,11 @@ async def _query_tool_nodes(dataset_id: UUID | None) -> list[Tool]:
         )
         return []
 
-    get_by_type = getattr(graph_engine, "get_nodes_by_type", None)
-    get_graph_data = getattr(graph_engine, "get_graph_data", None)
-    if get_by_type is None and get_graph_data is None:
-        logger.warning("Graph engine %s cannot list Tool nodes", type(graph_engine).__name__)
-        return []
-
     try:
-        if get_by_type is not None:
-            raw_nodes = await get_by_type(node_type=Tool)
-        else:
-            raw_nodes, _ = await get_graph_data()
+        raw_nodes = await graph_engine.get_nodes_by_type(node_type=Tool)
     except Exception as exc:
         logger.warning("Graph-backed Tool lookup failed: %s", exc, exc_info=True)
         return []
-    if isinstance(raw_nodes, tuple) and len(raw_nodes) == 2:
-        raw_nodes = raw_nodes[0]
 
     tools: list[Tool] = []
     for raw in raw_nodes or []:
