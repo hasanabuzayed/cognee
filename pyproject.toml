@@ -231,6 +231,7 @@ dev = [
 ]
 debug = ["debugpy>=1.8.9,<2.0.0"]
 redis = ["redis>=5.0.3,<6.0.0"]
+qdrant = ["qdrant-client>=1.18.0,<2"]
 
 tracing = [
     "opentelemetry-api>=1.20.0,<2",

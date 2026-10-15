@@ -28,6 +28,9 @@ from cognee.infrastructure.databases.vector.pgvector.PGVectorDatasetDatabaseHand
 from cognee.infrastructure.databases.vector.pgvector.PGVectorSharedDatasetDatabaseHandler import (
     PGVectorSharedDatasetDatabaseHandler,
 )
+from cognee.infrastructure.databases.vector.qdrant.QdrantDatasetDatabaseHandler import (
+    QdrantDatasetDatabaseHandler,
+)
 from cognee.infrastructure.databases.vector.turso.TursoVectorDatasetDatabaseHandler import (
     TursoVectorDatasetDatabaseHandler,
 )
@@ -56,6 +59,7 @@ supported_dataset_database_handlers = {
         "handler_instance": PGVectorSharedDatasetDatabaseHandler,
         "handler_provider": "pgvector",
     },
+    "qdrant": {"handler_instance": QdrantDatasetDatabaseHandler, "handler_provider": "qdrant"},
     "turso": {
         "handler_instance": TursoVectorDatasetDatabaseHandler,
         "handler_provider": "turso",

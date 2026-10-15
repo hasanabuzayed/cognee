@@ -143,8 +143,8 @@ def _create_vector_engine(
     for each provider, raising an EnvironmentError if any are missing, or ImportError if the
     provider's package is not installed.
 
-    Built-in providers include: pgvector, LanceDB, and neptune_analytics. Additional
-    providers (e.g. ChromaDB, Qdrant, Weaviate, Milvus) are available as community
+    Built-in providers include: pgvector, LanceDB, Qdrant and neptune_analytics. Additional
+    providers (e.g. ChromaDB, Weaviate, Milvus) are available as community
     adapters that register themselves via ``use_vector_adapter`` — see
     https://github.com/topoteretes/cognee-community.
 
@@ -275,6 +275,23 @@ def _create_vector_engine(
         return NeptuneAnalyticsAdapter(
             graph_id=graph_identifier,
             embedding_engine=embedding_engine,
+        )
+
+    elif vector_db_provider.lower() == "qdrant":
+        try:
+            from .qdrant.QDrantAdapter import QDrantAdapter
+        except ImportError:
+            raise ImportError(
+                "qdrant-client is not installed. Please install it with 'pip install cognee\"[qdrant]\"'"
+            )
+
+        return QDrantAdapter(
+            url=vector_db_url,
+            api_key=vector_db_key,
+            embedding_engine=embedding_engine,
+            database_name=vector_db_name,
+            vector_db_host=vector_db_host,
+            vector_db_port=vector_db_port,
         )
 
     elif vector_db_provider.lower() == "lancedb":
