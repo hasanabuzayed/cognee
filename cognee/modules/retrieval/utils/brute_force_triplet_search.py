@@ -79,7 +79,9 @@ async def get_memory_fragment(
         if graph_engine is None:
             graph_engine = await get_graph_engine()
 
-        if neighborhood_depth is not None and relevant_ids_to_filter:
+        # Neighborhood expansion is not node-set aware, so a node-set search keeps
+        # to the member-restricted projection below.
+        if neighborhood_depth is not None and relevant_ids_to_filter and not node_name:
             # Use neighborhood-based projection with seed nodes
             seed_ids = relevant_ids_to_filter[:neighborhood_seed_top_k]
             await memory_fragment.project_neighborhood_from_db(
@@ -288,6 +290,8 @@ async def brute_force_triplet_search(
         wide_search_limit = (
             None if query_list_length else (wide_search_top_k if node_name is None else None)
         )
+        if wide_search_limit is None:
+            wide_search_limit = get_base_config().vector_search_max_limit
 
         if collections is None:
             collections = [

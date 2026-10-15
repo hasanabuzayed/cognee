@@ -37,6 +37,10 @@ class BaseConfig(BaseSettings):
     # Default blend weight for the learned feedback signal during graph search.
     # Opt-in by default to preserve existing retrieval behavior.
     default_feedback_influence: float = float(os.getenv("DEFAULT_FEEDBACK_INFLUENCE", "0.0"))
+    # Upper bound (VECTOR_SEARCH_MAX_LIMIT) for triplet-search vector queries that would
+    # otherwise be unbounded: node-set filtered recalls, the shared edge collection and
+    # batch queries. Unset keeps upstream behaviour (every row, full node-set projection).
+    vector_search_max_limit: int | None = None
     # How far one rating pulls a personal prefers-edge weight toward its target.
     # Deliberately higher than the 0.1 used for global feedback_weight: a global
     # weight aggregates every user's evidence and should move slowly, a personal

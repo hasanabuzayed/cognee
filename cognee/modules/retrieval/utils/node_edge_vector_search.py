@@ -64,7 +64,9 @@ class NodeEdgeVectorSearch:
             if query_batch is not None:
                 self.query_list_length = len(query_batch)
                 span.set_attribute("cognee.vector.batch_size", len(query_batch))
-                search_results = await self._run_batch_search(collections, query_batch)
+                search_results = await self._run_batch_search(
+                    collections, query_batch, wide_search_limit
+                )
             else:
                 self.query_list_length = None
                 search_results = await self._run_single_search(
@@ -100,11 +102,11 @@ class NodeEdgeVectorSearch:
         )
 
     def extract_relevant_node_ids(self) -> list[str]:
-        """Extracts unique node IDs from search results."""
-        if self.query_list_length is not None:
-            return []
+        """Extracts unique node IDs from search results (across all queries in batch mode)."""
         relevant_node_ids = set()
         for scored_results in self.node_distances.values():
+            if self.query_list_length is not None:
+                scored_results = [node for per_query in scored_results for node in per_query]
             for scored_node in scored_results:
                 node_id = getattr(scored_node, "id", None)
                 if node_id:
@@ -143,22 +145,23 @@ class NodeEdgeVectorSearch:
                     self.node_distances[collection] = result
 
     async def _run_batch_search(
-        self, collections: list[str], query_batch: list[str]
+        self, collections: list[str], query_batch: list[str], limit: int | None = None
     ) -> list[list[Any]]:
         """Runs batch search across all collections and returns list-of-lists per collection."""
         search_tasks = [
-            self._search_batch_collection(collection, query_batch) for collection in collections
+            self._search_batch_collection(collection, query_batch, limit)
+            for collection in collections
         ]
         return await asyncio.gather(*search_tasks)
 
     async def _search_batch_collection(
-        self, collection_name: str, query_batch: list[str]
+        self, collection_name: str, query_batch: list[str], limit: int | None = None
     ) -> list[list[Any]]:
         """Searches one collection with batch queries and returns list-of-lists."""
         try:
             vector_engine = await self._get_vector_engine()
             return await vector_engine.batch_search(
-                collection_name=collection_name, query_texts=query_batch, limit=None
+                collection_name=collection_name, query_texts=query_batch, limit=limit
             )
         except CollectionNotFoundError:
             return [[]] * len(query_batch)

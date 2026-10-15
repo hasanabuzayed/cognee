@@ -97,6 +97,41 @@ async def test_brute_force_triplet_search_wide_search_limit_filtered_search():
 
 
 @pytest.mark.asyncio
+async def test_brute_force_triplet_search_max_limit_bounds_filtered_search(monkeypatch):
+    """VECTOR_SEARCH_MAX_LIMIT bounds node-set searches (edge collection included) and
+    hands the matched seeds to the projection together with the node-set filter."""
+    from cognee.base_config import get_base_config
+
+    monkeypatch.setattr(get_base_config(), "vector_search_max_limit", 25)
+    mock_vector_engine = AsyncMock()
+    mock_vector_engine.embedding_engine = AsyncMock()
+    mock_vector_engine.embedding_engine.embed_text = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+    mock_vector_engine.search = AsyncMock(return_value=[MockScoredResult("node1", 0.9)])
+    mock_fragment = AsyncMock(calculate_top_triplet_importances=AsyncMock(return_value=[]))
+
+    with (
+        patch(
+            "cognee.modules.retrieval.utils.node_edge_vector_search.get_vector_engine_async",
+            return_value=mock_vector_engine,
+        ),
+        patch(
+            "cognee.modules.retrieval.utils.brute_force_triplet_search.get_memory_fragment",
+            return_value=mock_fragment,
+        ) as mock_get_fragment_fn,
+    ):
+        await brute_force_triplet_search(query="test", node_name=["project"])
+
+    limits = {
+        c[1]["collection_name"]: c[1]["limit"] for c in mock_vector_engine.search.call_args_list
+    }
+    assert limits["EdgeType_relationship_name"] == 25
+    assert set(limits.values()) == {25}
+    call_kwargs = mock_get_fragment_fn.call_args[1]
+    assert call_kwargs["relevant_ids_to_filter"] == ["node1"]
+    assert call_kwargs["node_name"] == ["project"]  # isolation still applies
+
+
+@pytest.mark.asyncio
 async def test_brute_force_triplet_search_wide_search_default():
     """Test that wide_search_top_k defaults to 100."""
     mock_vector_engine = AsyncMock()

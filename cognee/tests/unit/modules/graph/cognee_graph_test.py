@@ -1314,3 +1314,45 @@ def test_normalize_query_distance_lists_empty_list(setup_graph):
     result = graph._normalize_query_distance_lists([], query_list_length=None, name="test")
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_project_graph_from_db_seeded_nodeset_keeps_isolation(setup_graph, mock_adapter):
+    """Seeded node-set projection keeps only set members and never falls back to the full graph."""
+    from cognee.base_config import get_base_config
+
+    nodes = [
+        ("seed", {"name": "a", "belongs_to_set": ["project"]}),
+        ("member", {"name": "b", "belongs_to_set": ["project", "user"]}),
+        ("other", {"name": "c", "belongs_to_set": ["user"]}),
+        ("legacy", {"name": "d"}),
+    ]
+    edges = [(src, dst, "rel", {}) for src, dst in [("seed", "member"), ("seed", "other")]]
+    mock_adapter.get_id_filtered_graph_data = AsyncMock(return_value=(nodes, edges))
+
+    graph = setup_graph
+    await graph.project_graph_from_db(
+        adapter=mock_adapter,
+        node_properties_to_project=["name"],
+        edge_properties_to_project=[],
+        node_type=object,
+        node_name=["project"],
+        relevant_ids_to_filter=["seed"],
+    )
+    assert set(graph.nodes) == {"seed", "member"}
+    assert [(e.node1.id, e.node2.id) for e in graph.edges] == [("seed", "member")]
+    mock_adapter.get_nodeset_subgraph.assert_not_called()
+
+    get_base_config().vector_search_max_limit = 25
+    try:
+        mock_adapter.get_id_filtered_graph_data = AsyncMock(return_value=([], []))
+        with pytest.raises(EntityNotFoundError):
+            await CogneeGraph().project_graph_from_db(
+                adapter=mock_adapter,
+                node_properties_to_project=["name"],
+                edge_properties_to_project=[],
+                relevant_ids_to_filter=["stale"],
+            )
+        mock_adapter.get_graph_data.assert_not_called()
+    finally:
+        get_base_config().vector_search_max_limit = None

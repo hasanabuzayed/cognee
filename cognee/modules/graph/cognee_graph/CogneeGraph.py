@@ -148,7 +148,11 @@ class CogneeGraph(CogneeAbstractGraph):
         else:
             logger.info("Retrieving full graph from database.")
             nodes_data, edges_data = await get_graph_data_fn()
-        if hasattr(adapter, "get_id_filtered_graph_data") and not nodes_data:
+        if (
+            hasattr(adapter, "get_id_filtered_graph_data")
+            and not nodes_data
+            and get_base_config().vector_search_max_limit is None
+        ):
             logger.warning(
                 "Id filtered graph returned empty, falling back to full graph retrieval."
             )
@@ -157,6 +161,30 @@ class CogneeGraph(CogneeAbstractGraph):
 
         if not nodes_data:
             raise EntityNotFoundError("Empty graph projected from the database.")
+        return nodes_data, edges_data or []
+
+    async def _get_seeded_nodeset_graph(
+        self, adapter, node_name, node_name_filter_operator, relevant_ids_to_filter
+    ):
+        """Seeds plus their neighbours, restricted to node-set members.
+
+        Membership is read from each node's ``belongs_to_set`` names, the same field
+        the vector payload filter uses. Nodes without it are dropped (fail closed),
+        and edges to dropped nodes are skipped during projection.
+        """
+        logger.info("Retrieving ID-filtered graph restricted to the node set.")
+        nodes_data, edges_data = await adapter.get_id_filtered_graph_data(
+            target_ids=relevant_ids_to_filter
+        )
+        wanted = set(node_name)
+        match = all if node_name_filter_operator == "AND" else any
+        nodes_data = [
+            (node_id, props)
+            for node_id, props in nodes_data or []
+            if match(name in set(props.get("belongs_to_set") or []) for name in wanted)
+        ]
+        if not nodes_data:
+            raise EntityNotFoundError(message="No node-set members around the matched seeds.")
         return nodes_data, edges_data or []
 
     async def _get_filtered_graph(
@@ -259,7 +287,15 @@ class CogneeGraph(CogneeAbstractGraph):
         if node_dimension < 1 or edge_dimension < 1:
             raise InvalidDimensionsError()
         try:
-            if node_type is not None and node_name not in [None, [], ""]:
+            if (
+                node_name not in [None, [], ""]
+                and relevant_ids_to_filter
+                and hasattr(adapter, "get_id_filtered_graph_data")
+            ):
+                nodes_data, edges_data = await self._get_seeded_nodeset_graph(
+                    adapter, node_name, node_name_filter_operator, relevant_ids_to_filter
+                )
+            elif node_type is not None and node_name not in [None, [], ""]:
                 nodes_data, edges_data = await self._get_nodeset_subgraph(
                     adapter, node_type, node_name, node_name_filter_operator
                 )

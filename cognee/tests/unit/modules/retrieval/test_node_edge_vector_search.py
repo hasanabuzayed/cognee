@@ -139,7 +139,7 @@ async def test_node_edge_vector_search_extract_relevant_node_ids_single_query():
 
 @pytest.mark.asyncio
 async def test_node_edge_vector_search_extract_relevant_node_ids_batch():
-    """Test that extract_relevant_node_ids returns empty list for batch mode."""
+    """Test that extract_relevant_node_ids unions node IDs across batch queries."""
     mock_vector_engine = AsyncMock()
     vector_search = NodeEdgeVectorSearch(vector_engine=mock_vector_engine)
     vector_search.query_list_length = 2
@@ -151,7 +151,7 @@ async def test_node_edge_vector_search_extract_relevant_node_ids_batch():
     }
 
     node_ids = vector_search.extract_relevant_node_ids()
-    assert node_ids == []
+    assert set(node_ids) == {"node1", "node2"}
 
 
 @pytest.mark.asyncio
