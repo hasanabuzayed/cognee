@@ -236,6 +236,9 @@ async def test_hidden_tools_keep_their_schemas():
     assert "dataset_name" in tools["cognify_status"]["inputSchema"]["properties"]
 
 
+@pytest.mark.skipif(
+    server.API_MODE, reason="API mode leaves usage logging to the API server it forwards to"
+)
 async def test_usage_logging_name_survives_the_registry_wrapper():
     """@registry.tool folds in @log_usage; every tool must still log as
     'MCP <tool_name>' the way the hand-written decorators did."""

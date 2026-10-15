@@ -21,19 +21,28 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
-from cognee.modules.storage.utils import JSONEncoder
-
 try:
-    from cognee.exceptions.remediation import REMEDIATION_MARKER, find_remediation
-except ImportError:  # cognee-mcp pins a released cognee; older cores have no hint table
-    REMEDIATION_MARKER = " Fix: "
-
-    def find_remediation(message: str) -> str | None:
-        return None
-
-
-from cognee.shared.logging_utils import get_log_file_location, get_logger, setup_logging
-from cognee.shared.usage_logger import log_usage
+    from .cognee_compat import (
+        API_MODE,
+        REMEDIATION_MARKER,
+        JSONEncoder,
+        find_remediation,
+        get_log_file_location,
+        get_logger,
+        log_usage,
+        setup_logging,
+    )
+except ImportError:
+    from cognee_compat import (
+        API_MODE,
+        REMEDIATION_MARKER,
+        JSONEncoder,
+        find_remediation,
+        get_log_file_location,
+        get_logger,
+        log_usage,
+        setup_logging,
+    )
 
 try:
     from .cognee_client import CogneeClient
@@ -1048,9 +1057,10 @@ async def main():
     # stamping is optional, booting is not. Loud, not silent: the warning
     # names exactly what is degraded and when the guard can be deleted.
     try:
-        from cognee.modules.operations import ORIGIN_MCP, set_operation_origin
+        if not API_MODE:  # API mode runs nothing in-process; the server stamps origin="api"
+            from cognee.modules.operations import ORIGIN_MCP, set_operation_origin
 
-        set_operation_origin(ORIGIN_MCP)
+            set_operation_origin(ORIGIN_MCP)
     except ImportError:
         logger.warning(
             "Installed cognee has no cognee.modules.operations — pipeline_runs "

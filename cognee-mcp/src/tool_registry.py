@@ -17,7 +17,10 @@ logged as ``MCP <tool_name>``, which is what all of them already did by hand.
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from cognee.shared.usage_logger import log_usage
+try:
+    from .cognee_compat import log_usage
+except ImportError:
+    from cognee_compat import log_usage
 
 # Advertised in tools/list without a search. Everything else is reachable
 # through the search transform (and remains directly callable by name).

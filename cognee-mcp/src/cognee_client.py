@@ -21,7 +21,10 @@ from uuid import UUID
 
 import httpx
 
-from cognee.shared.logging_utils import get_logger
+try:
+    from .cognee_compat import get_logger
+except ImportError:
+    from cognee_compat import get_logger
 
 try:
     from .server_utils import RecallState, classify_recall_state, normalize_delete_mode
