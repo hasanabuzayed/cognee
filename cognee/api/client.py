@@ -145,6 +145,10 @@ async def lifespan(app: FastAPI):
 
     get_improve_config()
 
+    from cognee.infrastructure.llm.response_cache import enable_llm_response_cache
+
+    enable_llm_response_cache()
+
     # Emit a clear startup message for docker logs
     logger.info("Backend server has started")
 
