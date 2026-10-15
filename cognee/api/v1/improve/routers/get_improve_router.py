@@ -39,6 +39,19 @@ class ImprovePayloadDTO(InDTO):
     session_ids: list[str] | None = Field(default=None, examples=[[]])
 
 
+def _is_schedulable_session_bridge(payload: "ImprovePayloadDTO") -> bool:
+    """A plain session bridge (session ids, nothing else) under IMPROVE_SCHEDULED."""
+    from cognee.modules.improve import get_improve_config
+
+    return (
+        get_improve_config().scheduled
+        and bool(payload.session_ids)
+        and not (payload.extraction_tasks or payload.enrichment_tasks or payload.data)
+        and not (payload.node_name or payload.build_global_context_index)
+        and not payload.build_truth_subspace
+    )
+
+
 def get_improve_router() -> APIRouter:
     router = APIRouter()
 
@@ -113,6 +126,17 @@ def get_improve_router() -> APIRouter:
             raise HTTPException(
                 status_code=400,
                 detail="Either datasetId or datasetName must be provided.",
+            )
+
+        if _is_schedulable_session_bridge(payload):
+            # IMPROVE_SCHEDULED: the server bridges sessions once they go idle
+            # (cognee/modules/improve/scheduler.py); a client's bridge call is
+            # a hint, answered at once, and nothing it sent is dropped.
+            from cognee.modules.improve import DEFAULT_STAGES, stage_names
+            from cognee.modules.improve.result import REASON_SCHEDULED
+
+            return ImproveResult.all_skipped(
+                stage_names(DEFAULT_STAGES), REASON_SCHEDULED, session_ids=payload.session_ids
             )
 
         try:

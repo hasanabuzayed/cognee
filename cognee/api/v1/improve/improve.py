@@ -101,6 +101,9 @@ class ImproveKwargs(TypedDict, total=False):
     vector_db_config: dict
     graph_db_config: dict
     feedback_alpha: float
+    # Stage names skipped for this run only, on top of IMPROVE_STAGES_DISABLED
+    # (the scheduler defers the LLM-drafting stages during their cooldown).
+    deferred_stages: list[str]
 
 
 async def improve(
@@ -482,6 +485,10 @@ async def _resolve_inputs(
     operation.set_dataset(resolved_dataset.id)
 
     config = get_improve_config()
+    if overrides.get("deferred_stages"):
+        config = config.model_copy(
+            update={"stages_disabled": [*config.stages_disabled, *overrides["deferred_stages"]]}
+        )
     # Fail loudly rather than skip silently in the loop: a typo in
     # IMPROVE_STAGES_DISABLED would disable nothing, and the fatal stage must
     # not be bypassable by config.

@@ -148,7 +148,9 @@ async def lifespan(app: FastAPI):
     # Emit a clear startup message for docker logs
     logger.info("Backend server has started")
 
-    async with pipeline_recovery_service():
+    from cognee.modules.improve.scheduler import improve_scheduler_service
+
+    async with pipeline_recovery_service(), improve_scheduler_service():
         yield
 
     # Let in-flight background work (background remember runs, the session

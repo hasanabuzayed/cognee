@@ -42,6 +42,8 @@ REASON_BACKEND_UNSUPPORTED = "backend_unsupported"
 # An earlier stage failed because the LLM budget is exhausted; every stage
 # after it is skipped, since it would fail the same way.
 REASON_BUDGET_EXHAUSTED = "budget_exhausted"
+# IMPROVE_SCHEDULED took the session bridge; the server runs it once the session is idle.
+REASON_SCHEDULED = "scheduled"
 
 
 class StageResult(BaseModel):

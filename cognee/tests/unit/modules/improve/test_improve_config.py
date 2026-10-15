@@ -80,6 +80,9 @@ def test_config_declares_no_shared_knobs():
         "debounce_seconds",
         "stages_disabled",
         "feedback_alpha",
+        "scheduled",
+        "idle_minutes",
+        "heavy_cooldown_hours",
     }
     for shared in ("triplet_embedding", "caching", "auto_feedback", "personalization_enabled"):
         assert shared not in fields

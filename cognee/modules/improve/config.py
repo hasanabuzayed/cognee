@@ -14,6 +14,9 @@ Environment variables (prefix ``IMPROVE_``)::
     IMPROVE_DEBOUNCE_SECONDS=0         # ... or after T seconds
     IMPROVE_STAGES_DISABLED=a,b        # csv of stage names to skip
     IMPROVE_FEEDBACK_ALPHA=0.1         # learning rate for feedback weights, (0, 1]
+    IMPROVE_SCHEDULED=false            # server decides when sessions bridge (scheduler.py)
+    IMPROVE_IDLE_MINUTES=30            # ... once a session has been idle this long
+    IMPROVE_HEAVY_COOLDOWN_HOURS=0     # ... and runs the LLM-drafting stages at most this often
 """
 
 from functools import lru_cache
@@ -40,6 +43,15 @@ class ImproveConfig(BaseSettings):
     # ``disabled_by_config``. Read as a comma-separated string.
     stages_disabled: Annotated[list[str], NoDecode] = []
     feedback_alpha: float = DEFAULT_FEEDBACK_ALPHA
+    # Server-owned bridging (``scheduler.py``): session improves run in the
+    # background once a session has been idle for ``idle_minutes``, and an
+    # explicit session-only ``/improve`` is accepted as a hint instead of
+    # running inline. ``heavy_cooldown_hours`` > 0 defers the LLM-drafting
+    # stages to at most one run per dataset per window; their watermarks pick
+    # up everything deferred.
+    scheduled: bool = False
+    idle_minutes: float = 30.0
+    heavy_cooldown_hours: float = 0.0
 
     model_config = SettingsConfigDict(env_prefix="IMPROVE_", extra="ignore")
 
@@ -64,6 +76,13 @@ class ImproveConfig(BaseSettings):
     def _entries_non_negative(cls, value: int) -> int:
         if value < 0:
             raise ValueError("debounce_entries must be >= 0")
+        return value
+
+    @field_validator("idle_minutes", "heavy_cooldown_hours")
+    @classmethod
+    def _schedule_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("idle_minutes and heavy_cooldown_hours must be >= 0")
         return value
 
     @field_validator("debounce_seconds")
