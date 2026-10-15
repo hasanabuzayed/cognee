@@ -108,8 +108,46 @@ _pool_lock = threading.Lock()
 _inference_lock = threading.Lock()
 
 
+class RemoteExtractor:
+    """A GLiNER2 service (``GLINER_REMOTE_URL``) standing in for the local model.
+
+    ``extract_batch`` / ``extract_once`` send it the same texts, schema and
+    options they would pass the runtime and get back the same result dicts, so
+    nothing downstream changes. Calls are blocking, like local inference: they
+    already run off the event loop.
+    """
+
+    def __init__(self, url: str, model_name: str, timeout: float):
+        self.url = url.rstrip("/")
+        self.model_name = model_name
+        self.timeout = timeout
+
+    def post(self, path: str, payload: dict) -> Any:
+        import httpx
+
+        response = httpx.post(
+            f"{self.url}{path}", json={"model": self.model_name, **payload}, timeout=self.timeout
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+def _remote_config() -> tuple[str | None, float]:
+    config = get_cognify_config()
+    return config.gliner_remote_url, config.gliner_remote_timeout
+
+
+def _schema_payload(schema: GlinerSchema) -> dict:
+    return {
+        "entity_types": dict(schema.entity_types),
+        "relation_types": dict(schema.relation_types),
+    }
+
+
 def require_gliner2() -> None:
     """Fail fast with an install hint when the optional dependency is missing."""
+    if _remote_config()[0]:
+        return  # the service runs the model
     try:
         import gliner2
     except ImportError as error:
@@ -135,6 +173,12 @@ def load_extractor(model_name: str = DEFAULT_MODEL) -> Any:
     with _load_lock:
         extractor = _extractors.get(model_name)
         if extractor is not None:
+            return extractor
+
+        remote_url, timeout = _remote_config()
+        if remote_url:
+            logger.info("GLiNER model %s served by %s", model_name, remote_url)
+            extractor = _extractors[model_name] = RemoteExtractor(remote_url, model_name, timeout)
             return extractor
 
         require_gliner2()
@@ -407,6 +451,18 @@ def extract_batch(
         return []
     if schema.is_empty:
         return [{} for _ in texts]
+    if isinstance(extractor, RemoteExtractor):
+        return extractor.post(
+            "/extract_batch",
+            {
+                "texts": list(texts),
+                **_schema_payload(schema),
+                "threshold": threshold,
+                "batch_size": batch_size,
+                "window_words": window_words,
+                "window_overlap_words": window_overlap_words,
+            },
+        )["results"]
 
     built = build_gliner_schema(extractor, schema)
     pool = _inference_pool()
@@ -445,6 +501,10 @@ def extract_once(
     """Run one unchunked entity+relation extraction."""
     if not text or schema.is_empty:
         return {}
+    if isinstance(extractor, RemoteExtractor):
+        return extractor.post(
+            "/extract_once", {"text": text, **_schema_payload(schema), "threshold": threshold}
+        )["result"]
 
     built = build_gliner_schema(extractor, schema)
 

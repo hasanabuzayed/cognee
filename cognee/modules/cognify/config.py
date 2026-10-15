@@ -45,6 +45,11 @@ class CognifyConfig(BaseSettings):
     # half of torch's thread count, capped by free memory. 1 keeps the
     # single-threaded behaviour. Output is identical at every setting.
     gliner_inference_threads: int = Field(default=0, ge=0)
+    # A GLiNER2 service to extract with instead of a local model (env:
+    # GLINER_REMOTE_URL). Set, the demo extractor needs neither gliner2 nor
+    # torch in this process: nothing is installed and nothing is loaded.
+    gliner_remote_url: str | None = None
+    gliner_remote_timeout: float = 300.0
     model_config = SettingsConfigDict(extra="allow")
 
     def to_dict(self) -> dict:
@@ -61,6 +66,7 @@ class CognifyConfig(BaseSettings):
             "gliner_auto_install": self.gliner_auto_install,
             "gliner_torch_index_url": self.gliner_torch_index_url,
             "gliner_inference_threads": self.gliner_inference_threads,
+            "gliner_remote_url": self.gliner_remote_url,
             "summary_method": self.summary_method,
         }
 
@@ -206,7 +212,7 @@ async def ensure_extractor_runtime(extractor: str, config: CognifyConfig) -> Non
         install_gliner_runtime,
     )
 
-    if extractor != GLINER_DEMO_EXTRACTOR or gliner_runtime_installed():
+    if extractor != GLINER_DEMO_EXTRACTOR or config.gliner_remote_url or gliner_runtime_installed():
         return
     if not config.gliner_auto_install:
         raise KeylessExtractorNotInstalledError()
