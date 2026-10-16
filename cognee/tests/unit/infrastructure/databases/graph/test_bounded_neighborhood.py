@@ -288,10 +288,7 @@ _NO_NATIVE_YET = "no native iter_bounded_neighborhood yet; follow-up to SDK-786"
             "cognee.infrastructure.databases.graph.neo4j_driver.adapter",
             marks=pytest.mark.xfail(strict=True, reason=_NO_NATIVE_YET),
         ),
-        pytest.param(
-            "cognee.infrastructure.databases.graph.ladybug.adapter",
-            marks=pytest.mark.xfail(strict=True, reason=_NO_NATIVE_YET),
-        ),
+        "cognee.infrastructure.databases.graph.ladybug.adapter",
         pytest.param(
             "cognee.infrastructure.databases.graph.turso.adapter",
             marks=pytest.mark.xfail(strict=True, reason=_NO_NATIVE_YET),

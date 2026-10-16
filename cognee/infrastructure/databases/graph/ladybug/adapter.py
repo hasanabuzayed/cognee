@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import threading
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timezone
@@ -21,6 +22,13 @@ from ladybug.database import Database
 import cognee_db_workers
 from cognee.exceptions import CogneeValidationError
 from cognee.infrastructure.databases.cache.config import get_cache_config
+from cognee.infrastructure.databases.graph.bounded_neighborhood import (
+    DEFAULT_NEIGHBORHOOD_CHUNK_SIZE,
+    chunk_members,
+    order_members,
+    unique_node_ids,
+    validate_bounded_neighborhood_args,
+)
 from cognee.infrastructure.databases.graph.graph_db_interface import (
     GraphDBInterface,
     temporal_anchors_from_rows,
@@ -3052,67 +3060,10 @@ class LadybugAdapter(GraphDBInterface):
 
             # Combine seed nodes and neighbor nodes
             all_ids = list(set(node_ids) | set(neighbor_ids))
-
-            # Fetch all nodes
-            nodes_query = """
-            UNWIND $ids AS wanted
-            MATCH (n:Node)
-            WHERE n.id = wanted
-            RETURN n.id, {
-                name: n.name,
-                type: n.type,
-                properties: n.properties
-            }
-            """
-            node_rows = await self.query(nodes_query, {"ids": all_ids})
-            formatted_nodes = []
-            for n in node_rows:
-                if n[0]:
-                    node_id = str(n[0])
-                    props = n[1]
-                    if props.get("properties"):
-                        try:
-                            additional_props = json.loads(props["properties"])
-                            props.update(additional_props)
-                            del props["properties"]
-                        except json.JSONDecodeError:
-                            logger.warning(f"Failed to parse properties JSON for node {node_id}")
-                    formatted_nodes.append((node_id, props))
-
+            formatted_nodes, formatted_edges = await self._read_nodes_and_edges(all_ids)
             if not formatted_nodes:
                 logger.warning("No nodes found in neighborhood.")
                 return [], []
-
-            # Fetch all edges between the collected nodes
-            edges_query = """
-            UNWIND $ids AS wanted
-            MATCH (n:Node)-[r]->(m:Node)
-            WHERE n.id = wanted
-            RETURN n.id, m.id, r.relationship_name, r.properties
-            """
-            edge_rows = await self.query(edges_query, {"ids": all_ids})
-            # The far endpoint is filtered here rather than with a second
-            # ``m.id IN $ids`` predicate: that predicate cannot use the primary
-            # key index and costs a table scan per id, which is the whole reason
-            # this query drives off UNWIND in the first place.
-            kept_ids = set(all_ids)
-            formatted_edges = []
-            for e in edge_rows:
-                if e and len(e) >= 3:
-                    source_id = str(e[0])
-                    target_id = str(e[1])
-                    if target_id not in kept_ids:
-                        continue
-                    rel_type = str(e[2])
-                    props = {}
-                    if len(e) > 3 and e[3]:
-                        try:
-                            props = json.loads(e[3])
-                        except (json.JSONDecodeError, TypeError):
-                            logger.warning(
-                                f"Failed to parse edge properties for {source_id}->{target_id}"
-                            )
-                    formatted_edges.append((source_id, target_id, rel_type, props))
 
             retrieval_time = time.time() - start_time
             logger.info(
@@ -3124,6 +3075,137 @@ class LadybugAdapter(GraphDBInterface):
         except Exception as e:
             logger.error(f"Failed to get neighborhood: {e}")
             raise
+
+    async def _read_nodes_and_edges(
+        self, all_ids: list[str]
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, str, str, dict[str, Any]]]]:
+        """Nodes with these ids and every edge between two of them."""
+
+        # Fetch all nodes
+        nodes_query = """
+        UNWIND $ids AS wanted
+        MATCH (n:Node)
+        WHERE n.id = wanted
+        RETURN n.id, {
+            name: n.name,
+            type: n.type,
+            properties: n.properties
+        }
+        """
+        node_rows = await self.query(nodes_query, {"ids": all_ids})
+        formatted_nodes = []
+        for n in node_rows:
+            if n[0]:
+                node_id = str(n[0])
+                props = n[1]
+                if props.get("properties"):
+                    try:
+                        additional_props = json.loads(props["properties"])
+                        props.update(additional_props)
+                        del props["properties"]
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse properties JSON for node {node_id}")
+                formatted_nodes.append((node_id, props))
+
+        if not formatted_nodes:
+            return [], []
+
+        # Fetch all edges between the collected nodes
+        edges_query = """
+        UNWIND $ids AS wanted
+        MATCH (n:Node)-[r]->(m:Node)
+        WHERE n.id = wanted
+        RETURN n.id, m.id, r.relationship_name, r.properties
+        """
+        edge_rows = await self.query(edges_query, {"ids": all_ids})
+        # The far endpoint is filtered here rather than with a second
+        # ``m.id IN $ids`` predicate: that predicate cannot use the primary
+        # key index and costs a table scan per id, which is the whole reason
+        # this query drives off UNWIND in the first place.
+        kept_ids = set(all_ids)
+        formatted_edges = []
+        for e in edge_rows:
+            if e and len(e) >= 3:
+                source_id = str(e[0])
+                target_id = str(e[1])
+                if target_id not in kept_ids:
+                    continue
+                rel_type = str(e[2])
+                props = {}
+                if len(e) > 3 and e[3]:
+                    try:
+                        props = json.loads(e[3])
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            f"Failed to parse edge properties for {source_id}->{target_id}"
+                        )
+                formatted_edges.append((source_id, target_id, rel_type, props))
+
+        return formatted_nodes, formatted_edges
+
+    async def iter_bounded_neighborhood(
+        self,
+        node_ids: list[str],
+        depth: int,
+        max_nodes: int,
+        chunk_size: int = DEFAULT_NEIGHBORHOOD_CHUNK_SIZE,
+        property_keys: list[str] | None = None,
+    ):
+        """Native bound for graph views: walks ids hop by hop and stops at ``max_nodes``.
+
+        The interface default reads the whole ``depth``-hop neighbourhood with
+        every property and cuts it in Python; seeded from the highest-degree
+        nodes, two hops reach the entire graph (12k nodes / 68k edges here, on a
+        live-events poll every few seconds). Here only ids are read while
+        walking, the budget is shared round robin over the frontier so one hub
+        cannot take it all, and content is read for the members alone.
+        """
+        validate_bounded_neighborhood_args(depth, max_nodes, chunk_size)
+        seed_ids = unique_node_ids(node_ids)
+        if not seed_ids:
+            return
+        present = {
+            str(row[0])
+            for row in await self.query(
+                "UNWIND $ids AS wanted MATCH (n:Node) WHERE n.id = wanted RETURN n.id",
+                {"ids": seed_ids},
+            )
+        }
+        members = [seed for seed in seed_ids if seed in present][:max_nodes]
+        seen, frontier = set(members), list(members)
+        for _ in range(depth):
+            if not frontier or len(members) >= max_nodes:
+                break
+            rows = await self.query(
+                "UNWIND $ids AS wanted MATCH (n:Node)-[:EDGE]-(m:Node) "
+                "WHERE n.id = wanted RETURN n.id, m.id",
+                {"ids": frontier},
+            )
+            by_source: dict[str, dict[str, None]] = {}
+            for source_id, neighbor_id in rows:
+                if neighbor_id and str(neighbor_id) not in seen:
+                    by_source.setdefault(str(source_id), {})[str(neighbor_id)] = None
+            queues = [deque(by_source.get(node_id, {})) for node_id in frontier]
+            next_frontier: list[str] = []
+            while len(members) < max_nodes and any(queues):
+                for queue in queues:
+                    while queue and queue[0] in seen:
+                        queue.popleft()
+                    if queue and len(members) < max_nodes:
+                        neighbor_id = queue.popleft()
+                        seen.add(neighbor_id)
+                        members.append(neighbor_id)
+                        next_frontier.append(neighbor_id)
+            frontier = next_frontier
+        if not members:
+            return
+
+        nodes, edges = await self._read_nodes_and_edges(members)
+        position = {node_id: index for index, node_id in enumerate(members)}
+        nodes.sort(key=lambda node: position.get(str(node[0]), len(position)))
+        ordered = order_members(nodes, edges, [m for m in members if m in present], max_nodes)
+        for chunk in chunk_members(ordered, edges, chunk_size, property_keys):
+            yield chunk
 
     async def get_nodeset_subgraph(
         self, node_type: type[Any], node_name: list[str], node_name_filter_operator: str = "OR"
