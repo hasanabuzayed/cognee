@@ -88,8 +88,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # The GLiNER runtime (keyless graph extraction): CPU-only torch from the PyTorch index
 # plus the gliner extra, baked in so a container never installs it at runtime. Runs
 # after the exact sync above, which would remove anything not in the lockfile.
+# INSTALL_GLINER=false skips it: an image that extracts with an LLM, or through
+# GLINER_REMOTE_URL, never loads torch.
+ARG INSTALL_GLINER=true
 RUN --mount=type=cache,target=/root/.cache/uv \
-    /app/.venv/bin/python -m cognee.tasks.graph.gliner_demo.install
+    if [ "${INSTALL_GLINER}" = "true" ]; then \
+        /app/.venv/bin/python -m cognee.tasks.graph.gliner_demo.install; \
+    fi
 
 FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
 
