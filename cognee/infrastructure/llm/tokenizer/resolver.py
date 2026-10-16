@@ -169,8 +169,10 @@ def resolve_embedding_tokenizer(
             context=f"openai embedding model {model!r}",
         )
 
-    if "gemini" in provider_lower:
+    if "gemini" in provider_lower or (bare or "").lower().startswith("gemini"):
         # Gemini tokenization needs a network call; approximate locally with TikToken.
+        # Also when a Gemini model is served through a gateway (openai_compatible):
+        # its name is not a HuggingFace repo, so the HF lookup below would only 401.
         return TikTokenTokenizer(model=None, max_completion_tokens=max_completion_tokens)
 
     if "mistral" in provider_lower:

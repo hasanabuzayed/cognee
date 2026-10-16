@@ -81,6 +81,12 @@ def test_fastembed_unknown_model_falls_back_with_warning(caplog):
     assert any("not in the known model map" in r.message for r in caplog.records)
 
 
+def test_gemini_model_behind_openai_compatible_gateway_uses_default_tiktoken():
+    tok = _resolve(provider="openai_compatible", model="gemini-embedding-2")
+    assert tok.kind == "tiktoken"
+    assert tok.kwargs["model"] is None
+
+
 def test_openai_compatible_uses_model_as_hf_repo():
     tok = _resolve(provider="openai_compatible", model="BAAI/bge-m3")
     assert tok.kind == "huggingface"
