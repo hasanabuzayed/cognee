@@ -113,17 +113,41 @@ async def test_idle_sessions_bridge_once_and_heavy_stages_wait_for_cooldown(env)
 
 
 @pytest.mark.asyncio
-async def test_lock_held_or_errored_runs_are_retried(env):
+async def test_lock_held_retries_next_pass_but_failures_back_off(env):
     await env.touch("idle", minutes_ago=120)
     env.improve.return_value = SimpleNamespace(status="skipped", lock_held=True)
     await scheduler.run_due_improves()
+    await scheduler.run_due_improves()
+    assert len(_calls(env.improve)) == 2  # lock held: plain retry, no backoff
+
     env.improve.return_value = SimpleNamespace(status="errored", lock_held=False)
     await scheduler.run_due_improves()
+    await scheduler.run_due_improves()
+    assert len(_calls(env.improve)) == 1  # errored: backed off, the next pass skips it
+    retry = json.loads(env.cache.values[scheduler.STATE_KEY])["retry"]
+    assert next(iter(retry.values()))["failures"] == 1
+
+    env.improve.side_effect = RuntimeError("rate limited")
+    state = json.loads(env.cache.values[scheduler.STATE_KEY])
+    for entry in state["retry"].values():
+        entry["after"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    env.cache.values[scheduler.STATE_KEY] = json.dumps(state)
+    await scheduler.run_due_improves()
+    retry = json.loads(env.cache.values[scheduler.STATE_KEY])["retry"]
+    entry = next(iter(retry.values()))
+    wait = datetime.fromisoformat(entry["after"]) - datetime.now(timezone.utc)
+    assert entry["failures"] == 2 and timedelta(seconds=590) < wait <= timedelta(seconds=600)
+
+    env.improve.side_effect = None
     env.improve.return_value = SimpleNamespace(status="completed", lock_held=False)
+    state = json.loads(env.cache.values[scheduler.STATE_KEY])
+    for entry in state["retry"].values():
+        entry["after"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    env.cache.values[scheduler.STATE_KEY] = json.dumps(state)
+    _calls(env.improve)
     await scheduler.run_due_improves()
-    assert [ids for ids, _ in _calls(env.improve)] == [["idle"], ["idle"], ["idle"]]
-    await scheduler.run_due_improves()
-    assert _calls(env.improve) == []
+    assert _calls(env.improve) == [(["idle"], False)]
+    assert json.loads(env.cache.values[scheduler.STATE_KEY])["retry"] == {}  # success clears it
 
 
 def test_router_treats_only_plain_session_bridges_as_hints():

@@ -34,6 +34,10 @@ from .config import get_improve_config
 logger = get_logger("improve.scheduler")
 
 POLL_SECONDS = 60
+# A failed bridge (typically the LLM provider rate-limiting the cognify inside it)
+# waits before its next attempt: 5 min, doubling per consecutive failure, capped at 1 h.
+RETRY_BASE_SECONDS = 300
+RETRY_MAX_SECONDS = 3600
 STATE_KEY = "improve_scheduler:v1"
 HEAVY_STAGES = ("extract_agent_context", "distill_sessions")
 
@@ -58,6 +62,7 @@ async def _load_state(cache) -> dict:
     state.setdefault("bridged", {})
     state.setdefault("heavy_at", {})
     state.setdefault("heavy_pending", {})
+    state.setdefault("retry", {})
     return state
 
 
@@ -120,6 +125,10 @@ async def run_due_improves() -> None:
 
     cooldown = timedelta(hours=config.heavy_cooldown_hours)
     for (user_id, dataset_id), session_ids in due.items():
+        group = f"{user_id}:{dataset_id}"
+        retry = state["retry"].get(group)
+        if retry and _now() < _aware(datetime.fromisoformat(retry["after"])):
+            continue
         pending = state["heavy_pending"].get(dataset_id, {}).get(user_id, [])
         heavy_at = state["heavy_at"].get(dataset_id)
         heavy_due = (
@@ -142,9 +151,14 @@ async def run_due_improves() -> None:
             )
         except Exception:
             logger.exception("improve scheduler: bridge failed for dataset %s", dataset_id)
-            continue
-        if getattr(result, "lock_held", False) or result.status == "errored":
-            continue  # markers stay put, so the next pass retries
+            await _back_off(cache, state, group)
+            break
+        if getattr(result, "lock_held", False):
+            continue  # another run holds these sessions; markers stay put for the next pass
+        if result.status == "errored":
+            await _back_off(cache, state, group)
+            break
+        state["retry"].pop(group, None)
 
         for session_id in session_ids:
             key = f"{user_id}:{session_id}"
@@ -165,6 +179,22 @@ async def run_due_improves() -> None:
             dataset_id,
             "full" if heavy_due else "heavy stages deferred",
         )
+
+
+async def _back_off(cache, state: dict, group: str) -> None:
+    """Delay this group's next attempt, and end the pass.
+
+    Markers stay put, so nothing is lost; the pass stops because the usual cause
+    (a provider rate limit) would fail every other group the same way.
+    """
+    failures = state["retry"].get(group, {}).get("failures", 0) + 1
+    delay = min(RETRY_MAX_SECONDS, RETRY_BASE_SECONDS * 2 ** (failures - 1))
+    state["retry"][group] = {
+        "failures": failures,
+        "after": (_now() + timedelta(seconds=delay)).isoformat(),
+    }
+    await _save_state(cache, state)
+    logger.warning("improve scheduler: bridge failed %d time(s); retrying in %ds", failures, delay)
 
 
 async def _loop() -> None:
